@@ -39,7 +39,8 @@ import java.net.URL
 data class ChatMsg(val fromUser: Boolean, val text: String)
 
 object GeminiApi {
-    private const val MODEL = "gemini-4-hydrogen"
+    MainActivity.kt में यह लाइन बदलें:
+private const val MODEL = "gemini-3.8-flash"
 
     fun ask(apiKey: String, prompt: String): String {
         val url = URL("https://generativelanguage.googleapis.com/v1beta/models/$MODEL:generateContent")
