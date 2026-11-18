@@ -39,7 +39,7 @@ import java.net.URL
 data class ChatMsg(val fromUser: Boolean, val text: String)
 
 object GroqApi {
-    private const val MODEL = "llama-3.1-8b-instant"
+    private const val MODEL = "llama-3.3-70b-versatile"
 
     fun ask(apiKey: String, prompt: String): String {
         val url = URL("https://api.groq.com/openai/v1/chat/completions")
