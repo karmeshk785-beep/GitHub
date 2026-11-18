@@ -273,3 +273,407 @@ fun zipEntries(ctx: Context, uri: Uri): List<String> {
     }
     return out
 }
+class MainActivity : ComponentActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        val prefs = Store.prefs(this)
+        setContent {
+            MaterialTheme {
+                App(prefs)
+            }
+        }
+    }
+}
+
+@Composable
+fun App(prefs: SharedPreferences) {
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+
+    val sessions = remember {
+        val list = mutableStateListOf<ChatSession>()
+        list.addAll(Store.load(prefs))
+        if (list.isEmpty()) list.add(newSession())
+        list
+    }
+    var currentId by remember { mutableStateOf(sessions.first().id) }
+    var screen by remember {
+        mutableStateOf(if (prefs.getString("groq_key", "").isNullOrEmpty()) Screen.KEYS else Screen.CHAT)
+    }
+    var busy by remember { mutableStateOf(false) }
+    var input by remember { mutableStateOf("") }
+    val current = sessions.firstOrNull { it.id == currentId } ?: sessions.first()
+
+    fun persist() = Store.save(prefs, sessions)
+
+    fun addMsg(m: ChatMsg) {
+        current.messages.add(m)
+        persist()
+    }
+
+    fun aiReply() {
+        val key = prefs.getString("groq_key", "") ?: ""
+        val target = current
+        val history = target.messages.toList()
+        busy = true
+        scope.launch {
+            val reply = withContext(Dispatchers.IO) {
+                try {
+                    Groq.ask(key, history)
+                } catch (e: Exception) {
+                    "त्रुटि: ${e.message}"
+                }
+            }
+            target.messages.add(ChatMsg(false, reply))
+            Store.save(prefs, sessions)
+            busy = false
+        }
+    }
+
+    fun buildApk() {
+        val token = prefs.getString("gh_token", "") ?: ""
+        val owner = prefs.getString("gh_owner", "") ?: ""
+        val repo = prefs.getString("gh_repo", "") ?: ""
+        val target = current
+        if (token.isEmpty() || owner.isEmpty() || repo.isEmpty()) {
+            target.messages.add(ChatMsg(false, "पहले चाबियाँ में GitHub token, owner और repo भरें।"))
+            Store.save(prefs, sessions)
+            return
+        }
+        busy = true
+        scope.launch {
+            val before = withContext(Dispatchers.IO) {
+                GitHubBuild.latestArtifactId(token, owner, repo)
+            } ?: 0L
+            val code = withContext(Dispatchers.IO) {
+                GitHubBuild.trigger(token, owner, repo)
+            }
+            if (code != 204) {
+                target.messages.add(
+                    ChatMsg(false, "GitHub build शुरू नहीं हुआ (code $code)। token और repo जाँचें।")
+                )
+                Store.save(prefs, sessions)
+                busy = false
+                return@launch
+            }
+            target.messages.add(
+                ChatMsg(false, "Build शुरू हो गया है। 2-3 मिनट लगेंगे, मैं इंतज़ार कर रहा हूँ।")
+            )
+            Store.save(prefs, sessions)
+
+            var found: Long? = null
+            var tries = 0
+            while (found == null && tries < 40) {
+                delay(15000)
+                tries++
+                val id = withContext(Dispatchers.IO) {
+                    GitHubBuild.latestArtifactId(token, owner, repo)
+                }
+                if (id != null && id > before) found = id
+            }
+            val f = found
+            if (f != null) {
+                target.messages.add(ChatMsg(false, "APK तैयार है। नीचे 'इंस्टॉल करें' दबाइए।", f))
+            } else {
+                target.messages.add(
+                    ChatMsg(false, "Build अभी पूरा नहीं हुआ। GitHub Actions पेज पर देखें।")
+                )
+            }
+            Store.save(prefs, sessions)
+            busy = false
+        }
+    }
+
+    fun install(id: Long) {
+        val token = prefs.getString("gh_token", "") ?: ""
+        val owner = prefs.getString("gh_owner", "") ?: ""
+        val repo = prefs.getString("gh_repo", "") ?: ""
+        busy = true
+        scope.launch {
+            val apk = withContext(Dispatchers.IO) {
+                GitHubBuild.downloadApk(ctx, token, owner, repo, id)
+            }
+            busy = false
+            if (apk == null) {
+                addMsg(ChatMsg(false, "APK डाउनलोड नहीं हो पाई। token जाँचें।"))
+            } else {
+                Installer.install(ctx, apk)
+            }
+        }
+    }
+
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
+        if (uri != null) {
+            scope.launch {
+                val name = withContext(Dispatchers.IO) { fileName(ctx, uri) }
+                val entries = withContext(Dispatchers.IO) { zipEntries(ctx, uri) }
+                addMsg(ChatMsg(true, "फ़ाइल भेजी: $name"))
+                if (entries.isEmpty()) {
+                    addMsg(ChatMsg(false, "यह ZIP नहीं लगती या इसमें फ़ाइलें नहीं मिलीं।"))
+                } else {
+                    addMsg(ChatMsg(true, "प्रोजेक्ट फ़ाइलें:\n" + entries.joinToString("\n")))
+                    aiReply()
+                }
+            }
+        }
+    }
+
+    fun send() {
+        val text = input.trim()
+        if (text.isEmpty() || busy) return
+        input = ""
+        if (current.messages.isEmpty()) current.title = text.take(25)
+        addMsg(ChatMsg(true, text))
+        if (isBuildCommand(text)) buildApk() else aiReply()
+    }
+
+    fun newChat() {
+        val s = newSession()
+        sessions.add(0, s)
+        currentId = s.id
+        persist()
+        screen = Screen.CHAT
+    }
+
+    fun deleteChat(s: ChatSession) {
+        sessions.remove(s)
+        if (sessions.isEmpty()) sessions.add(newSession())
+        if (currentId == s.id) currentId = sessions.first().id
+        persist()
+    }
+
+    when (screen) {
+        Screen.CHAT -> ChatScreen(
+            session = current,
+            busy = busy,
+            input = input,
+            onInput = { input = it },
+            onSend = { send() },
+            onAttach = { picker.launch("*/*") },
+            onSettings = { screen = Screen.SETTINGS },
+            onNewChat = { newChat() },
+            onInstall = { install(it) }
+        )
+        Screen.SETTINGS -> SettingsScreen { screen = it }
+        Screen.KEYS -> KeysScreen(prefs) { screen = Screen.CHAT }
+        Screen.CHATLIST -> ChatListScreen(
+            sessions = sessions,
+            onOpen = {
+                currentId = it.id
+                screen = Screen.CHAT
+            },
+            onDelete = { deleteChat(it) },
+            onBack = { screen = Screen.SETTINGS }
+        )
+        Screen.AGENTS -> AgentsScreen { screen = Screen.SETTINGS }
+        Screen.ABOUT -> AboutScreen { screen = Screen.SETTINGS }
+    }
+}
+
+@Composable
+fun ChatScreen(
+    session: ChatSession,
+    busy: Boolean,
+    input: String,
+    onInput: (String) -> Unit,
+    onSend: () -> Unit,
+    onAttach: () -> Unit,
+    onSettings: () -> Unit,
+    onNewChat: () -> Unit,
+    onInstall: (Long) -> Unit
+) {
+    Column(modifier = Modifier.fillMaxSize().padding(12.dp)) {
+        Row(modifier = Modifier.fillMaxWidth()) {
+            Text(
+                session.title,
+                style = MaterialTheme.typography.titleLarge,
+                modifier = Modifier.weight(1f)
+            )
+            TextButton(onClick = onNewChat) { Text("नई चैट") }
+            TextButton(onClick = onSettings) { Text("सेटिंग्स") }
+        }
+
+        LazyColumn(modifier = Modifier.weight(1f).fillMaxWidth()) {
+            items(session.messages) { m ->
+                MessageItem(m, onInstall)
+            }
+        }
+
+        if (busy) Text("सोच रहा हूँ...", modifier = Modifier.padding(4.dp))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            TextButton(onClick = onAttach) { Text("फ़ाइल") }
+            OutlinedTextField(
+                value = input,
+                onValueChange = onInput,
+                label = { Text("लिखें या कमांड दें") },
+                modifier = Modifier.weight(1f)
+            )
+            Button(onClick = onSend, enabled = !busy && input.isNotBlank()) {
+                Text("भेजो")
+            }
+        }
+    }
+}
+
+@Composable
+fun MessageItem(m: ChatMsg, onInstall: (Long) -> Unit) {
+    val clip = LocalClipboardManager.current
+    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+        SelectionContainer {
+            Text(if (m.fromUser) "आप: ${m.text}" else "AI: ${m.text}")
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            TextButton(onClick = { clip.setText(AnnotatedString(m.text)) }) { Text("कॉपी") }
+            if (m.text.contains("```")) {
+                TextButton(onClick = { clip.setText(AnnotatedString(extractCode(m.text))) }) {
+                    Text("कोड कॉपी")
+                }
+            }
+            val id = m.artifactId
+            if (id != null) {
+                Button(onClick = { onInstall(id) }) { Text("इंस्टॉल करें") }
+            }
+        }
+    }
+}
+
+@Composable
+fun SettingsScreen(onNav: (Screen) -> Unit) {
+    Column(
+        modifier = Modifier.fillMaxSize().padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Text("सेटिंग्स", style = MaterialTheme.typography.headlineSmall)
+        Button(onClick = { onNav(Screen.KEYS) }) { Text("चाबियाँ") }
+        Button(onClick = { onNav(Screen.CHATLIST) }) { Text("चैट सूची") }
+        Button(onClick = { onNav(Screen.AGENTS) }) { Text("एजेंट") }
+        Button(onClick = { onNav(Screen.ABOUT) }) { Text("इस ऐप के बारे में") }
+        TextButton(onClick = { onNav(Screen.CHAT) }) { Text("चैट पर वापस") }
+    }
+}
+
+@Composable
+fun KeysScreen(prefs: SharedPreferences, onDone: () -> Unit) {
+    var groq by remember { mutableStateOf(prefs.getString("groq_key", "") ?: "") }
+    var token by remember { mutableStateOf(prefs.getString("gh_token", "") ?: "") }
+    var owner by remember { mutableStateOf(prefs.getString("gh_owner", "") ?: "") }
+    var repo by remember { mutableStateOf(prefs.getString("gh_repo", "") ?: "") }
+
+    Column(
+        modifier = Modifier.fillMaxSize().padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Text("चाबियाँ", style = MaterialTheme.typography.headlineSmall)
+        OutlinedTextField(
+            value = groq,
+            onValueChange = { groq = it },
+            label = { Text("Groq API Key") },
+            visualTransformation = PasswordVisualTransformation(),
+            modifier = Modifier.fillMaxWidth()
+        )
+        OutlinedTextField(
+            value = token,
+            onValueChange = { token = it },
+            label = { Text("GitHub Token") },
+            visualTransformation = PasswordVisualTransformation(),
+            modifier = Modifier.fillMaxWidth()
+        )
+        OutlinedTextField(
+            value = owner,
+            onValueChange = { owner = it },
+            label = { Text("GitHub Username (owner)") },
+            modifier = Modifier.fillMaxWidth()
+        )
+        OutlinedTextField(
+            value = repo,
+            onValueChange = { repo = it },
+            label = { Text("GitHub Repo नाम") },
+            modifier = Modifier.fillMaxWidth()
+        )
+        Button(onClick = {
+            prefs.edit()
+                .putString("groq_key", groq.trim())
+                .putString("gh_token", token.trim())
+                .putString("gh_owner", owner.trim())
+                .putString("gh_repo", repo.trim())
+                .apply()
+            onDone()
+        }) {
+            Text("सेव करो")
+        }
+    }
+}
+
+@Composable
+fun ChatListScreen(
+    sessions: List<ChatSession>,
+    onOpen: (ChatSession) -> Unit,
+    onDelete: (ChatSession) -> Unit,
+    onBack: () -> Unit
+) {
+    Column(modifier = Modifier.fillMaxSize().padding(12.dp)) {
+        Row(modifier = Modifier.fillMaxWidth()) {
+            Text(
+                "पुरानी चैट",
+                style = MaterialTheme.typography.headlineSmall,
+                modifier = Modifier.weight(1f)
+            )
+            TextButton(onClick = onBack) { Text("वापस") }
+        }
+        LazyColumn(modifier = Modifier.fillMaxSize()) {
+            items(sessions) { s ->
+                Row(modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+                    Text(
+                        s.title,
+                        modifier = Modifier.weight(1f).clickable { onOpen(s) }
+                    )
+                    TextButton(onClick = { onDelete(s) }) { Text("मिटाओ") }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun AgentsScreen(onBack: () -> Unit) {
+    val agents = listOf(
+        "मैनेजर" to "कमांड पढ़कर काम बाँटता है",
+        "कोडर" to "Groq से कोड लिखता है",
+        "रनर" to "Termux में कमांड चलाता है",
+        "पुशर" to "GitHub पर कोड भेजता है",
+        "चेकर" to "हर स्टेप की जाँच करता है",
+        "Fixer" to "गलती होने पर सुधार की कोशिश करता है"
+    )
+    Column(
+        modifier = Modifier.fillMaxSize().padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Text("एजेंट", style = MaterialTheme.typography.headlineSmall)
+        Text("अभी यह ढाँचा है। Termux और पूरी पाइपलाइन बाद में जुड़ेगी।")
+        LazyColumn(modifier = Modifier.weight(1f)) {
+            items(agents) { (name, desc) ->
+                Column(modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+                    Text(name, style = MaterialTheme.typography.titleMedium)
+                    Text(desc)
+                }
+            }
+        }
+        TextButton(onClick = onBack) { Text("वापस") }
+    }
+}
+
+@Composable
+fun AboutScreen(onBack: () -> Unit) {
+    Column(
+        modifier = Modifier.fillMaxSize().padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Text("इस ऐप के बारे में", style = MaterialTheme.typography.headlineSmall)
+        Text("यह ऐप तिलक राम ने बनाया है।")
+        TextButton(onClick = onBack) { Text("वापस") }
+    }
+}
