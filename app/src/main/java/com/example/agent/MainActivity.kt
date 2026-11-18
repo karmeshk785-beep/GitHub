@@ -38,19 +38,20 @@ import java.net.URL
 
 data class ChatMsg(val fromUser: Boolean, val text: String)
 
-object GeminiApi {
-    private const val MODEL = "gemini-3.8-flash"
+object GroqApi {
+    private const val MODEL = "llama-3.1-8b-instant"
 
     fun ask(apiKey: String, prompt: String): String {
-        val url = URL("https://generativelanguage.googleapis.com/v1beta/models/$MODEL:generateContent")
-        val part = JSONObject().put("text", prompt)
-        val content = JSONObject().put("parts", JSONArray().put(part))
-        val body = JSONObject().put("contents", JSONArray().put(content))
+        val url = URL("https://api.groq.com/openai/v1/chat/completions")
+        val message = JSONObject().put("role", "user").put("content", prompt)
+        val body = JSONObject()
+            .put("model", MODEL)
+            .put("messages", JSONArray().put(message))
 
         val conn = url.openConnection() as HttpURLConnection
         conn.requestMethod = "POST"
         conn.setRequestProperty("Content-Type", "application/json")
-        conn.setRequestProperty("x-goog-api-key", apiKey)
+        conn.setRequestProperty("Authorization", "Bearer $apiKey")
         conn.doOutput = true
         conn.connectTimeout = 15000
         conn.readTimeout = 60000
@@ -62,12 +63,10 @@ object GeminiApi {
         if (code !in 200..299) return "Error $code: $text"
 
         return JSONObject(text)
-            .getJSONArray("candidates")
+            .getJSONArray("choices")
             .getJSONObject(0)
-            .getJSONObject("content")
-            .getJSONArray("parts")
-            .getJSONObject(0)
-            .getString("text")
+            .getJSONObject("message")
+            .getString("content")
     }
 }
 
@@ -107,7 +106,7 @@ fun SettingsScreen(prefs: SharedPreferences, onDone: () -> Unit) {
         OutlinedTextField(
             value = key,
             onValueChange = { key = it },
-            label = { Text("Gemini API Key") },
+            label = { Text("Groq API Key") },
             modifier = Modifier.fillMaxWidth()
         )
         Button(
@@ -163,7 +162,7 @@ fun ChatScreen(prefs: SharedPreferences, onOpenSettings: () -> Unit) {
                     scope.launch {
                         val reply = withContext(Dispatchers.IO) {
                             try {
-                                GeminiApi.ask(key, prompt)
+                                GroqApi.ask(key, prompt)
                             } catch (e: Exception) {
                                 "त्रुटि: ${e.message}"
                             }
@@ -172,7 +171,7 @@ fun ChatScreen(prefs: SharedPreferences, onOpenSettings: () -> Unit) {
                         busy = false
                     }
                 }
-            ) { Text("Gemini") }
+            ) { Text("Groq") }
 
             Button(enabled = false, onClick = {}) { Text("Termux") }
             Button(enabled = false, onClick = {}) { Text("GitHub") }
