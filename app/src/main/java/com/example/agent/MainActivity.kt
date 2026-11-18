@@ -161,3 +161,115 @@ object Groq {
             .getJSONObject("message").getString("content")
     }
 }
+object GitHubBuild {
+    private const val GH_ACCEPT = "application/vnd.github+json"
+
+    fun latestArtifactId(token: String, owner: String, repo: String): Long? {
+        val (code, text) = httpGet(
+            "https://api.github.com/repos/$owner/$repo/actions/artifacts?name=app-debug&per_page=1",
+            token
+        )
+        if (code !in 200..299) return null
+        val arr = JSONObject(text).getJSONArray("artifacts")
+        return if (arr.length() == 0) null else arr.getJSONObject(0).getLong("id")
+    }
+
+    fun trigger(token: String, owner: String, repo: String): Int {
+        val body = JSONObject().put("ref", "main").toString()
+        val (code, _) = httpPost(
+            "https://api.github.com/repos/$owner/$repo/actions/workflows/build.yml/dispatches",
+            body,
+            token,
+            mapOf("Accept" to GH_ACCEPT)
+        )
+        return code
+    }
+
+    fun downloadApk(ctx: Context, token: String, owner: String, repo: String, artifactId: Long): File? {
+        val (c, t) = httpGet(
+            "https://api.github.com/repos/$owner/$repo/actions/artifacts/$artifactId", token
+        )
+        if (c !in 200..299) return null
+        val dl = JSONObject(t).getString("archive_download_url")
+
+        val first = URL(dl).openConnection() as HttpURLConnection
+        first.setRequestProperty("Authorization", "Bearer $token")
+        first.instanceFollowRedirects = false
+        val code = first.responseCode
+        val src: InputStream = if (code in 300..399) {
+            val loc = first.getHeaderField("Location") ?: return null
+            URL(loc).openStream()
+        } else {
+            first.inputStream
+        }
+
+        val zip = File(ctx.cacheDir, "artifact.zip")
+        src.use { input -> FileOutputStream(zip).use { input.copyTo(it) } }
+
+        val apk = File(ctx.cacheDir, "app-debug.apk")
+        var found = false
+        ZipInputStream(zip.inputStream()).use { z ->
+            var e = z.nextEntry
+            while (e != null) {
+                if (e.name.endsWith("app-debug.apk")) {
+                    FileOutputStream(apk).use { z.copyTo(it) }
+                    found = true
+                    break
+                }
+                e = z.nextEntry
+            }
+        }
+        return if (found) apk else null
+    }
+}
+
+object Installer {
+    fun install(ctx: Context, apk: File) {
+        val uri = FileProvider.getUriForFile(ctx, "${ctx.packageName}.fileprovider", apk)
+        val i = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, "application/vnd.android.package-archive")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        ctx.startActivity(i)
+    }
+}
+
+fun isBuildCommand(t: String): Boolean {
+    val s = t.lowercase()
+    return s.contains("apk") &&
+        (s.contains("बनाओ") || s.contains("banao") || s.contains("build"))
+}
+
+fun extractCode(s: String): String =
+    Regex("""```[a-zA-Z]*\n?([\s\S]*?)```""")
+        .findAll(s)
+        .joinToString("\n\n") { it.groupValues[1].trim() }
+
+fun fileName(ctx: Context, uri: Uri): String {
+    val c = ctx.contentResolver.query(uri, null, null, null, null) ?: return "फ़ाइल"
+    c.use {
+        if (it.moveToFirst()) {
+            val i = it.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+            if (i >= 0) return it.getString(i)
+        }
+    }
+    return "फ़ाइल"
+}
+
+fun zipEntries(ctx: Context, uri: Uri): List<String> {
+    val out = mutableListOf<String>()
+    try {
+        ctx.contentResolver.openInputStream(uri)?.use { raw ->
+            ZipInputStream(raw).use { z ->
+                var e = z.nextEntry
+                while (e != null && out.size < 300) {
+                    if (!e.isDirectory) out.add(e.name)
+                    e = z.nextEntry
+                }
+            }
+        }
+    } catch (e: Exception) {
+        // फ़ाइल ZIP नहीं है, तो खाली लिस्ट लौटेगी
+    }
+    return out
+}
