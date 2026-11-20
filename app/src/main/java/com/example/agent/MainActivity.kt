@@ -262,6 +262,7 @@ object GitHubBuild {
         return if (found) apk else null
     }
 }object Installer {
+    
     fun install(ctx: Context, apk: File) {
         val uri = FileProvider.getUriForFile(ctx, "${ctx.packageName}.fileprovider", apk)
         val i = Intent(Intent.ACTION_VIEW).apply {
@@ -547,7 +548,7 @@ fun ChatScreen(
     onAttach: () -> Unit,
     onSettings: () -> Unit,
     onNewChat: () -> Unit,
-    onInstall: (Long) -> Unit,
+    onTermux: () -> Unit
                     onChatList: () -> Unit,
     onTermux: () -> Unit
 ) {
