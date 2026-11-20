@@ -11,6 +11,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Alignment
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -34,7 +35,6 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
@@ -161,27 +161,7 @@ object Groq {
             .getJSONArray("choices").getJSONObject(0)
             .getJSONObject("message").getString("content")
     }
-}    fun pushFile(token: String, owner: String, repo: String, path: String, content: String): Int {
-        val encoded = java.util.Base64.getEncoder().encodeToString(content.toByteArray(Charsets.UTF_8))
-        val body = JSONObject()
-            .put("message", "Add $path via agent")
-            .put("content", encoded)
-            .put("branch", "main")
-            .toString()
-        val conn = URL("https://api.github.com/repos/$owner/$repo/contents/$path")
-            .openConnection() as HttpURLConnection
-        conn.requestMethod = "PUT"
-        conn.setRequestProperty("Authorization", "Bearer $token")
-        conn.setRequestProperty("Accept", "application/vnd.github+json")
-        conn.setRequestProperty("Content-Type", "application/json")
-        conn.doOutput = true
-        conn.connectTimeout = 15000
-        conn.readTimeout = 60000
-        conn.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
-        return conn.responseCode
-}
-
-object GitHubBuild {
+}object GitHubBuild {
     private const val GH_ACCEPT = "application/vnd.github+json"
 
     fun latestArtifactId(token: String, owner: String, repo: String): Long? {
@@ -205,7 +185,7 @@ object GitHubBuild {
         return code
     }
 
-        fun pushFile(token: String, owner: String, repo: String, path: String, content: String): Int {
+    fun pushFile(token: String, owner: String, repo: String, path: String, content: String): Int {
         val encoded = java.util.Base64.getEncoder().encodeToString(content.toByteArray(Charsets.UTF_8))
         val body = JSONObject()
             .put("message", "Add $path via agent")
@@ -223,7 +203,8 @@ object GitHubBuild {
         conn.readTimeout = 60000
         conn.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
         return conn.responseCode
-        }
+    }
+
     fun downloadApk(ctx: Context, token: String, owner: String, repo: String, artifactId: Long): File? {
         val (c, t) = httpGet(
             "https://api.github.com/repos/$owner/$repo/actions/artifacts/$artifactId", token
@@ -242,7 +223,6 @@ object GitHubBuild {
             first.inputStream
         }
 
-        
         val zip = File(ctx.cacheDir, "artifact.zip")
         src.use { input -> FileOutputStream(zip).use { input.copyTo(it) } }
 
@@ -261,8 +241,9 @@ object GitHubBuild {
         }
         return if (found) apk else null
     }
-}object Installer {
-    
+}
+
+object Installer {
     fun install(ctx: Context, apk: File) {
         val uri = FileProvider.getUriForFile(ctx, "${ctx.packageName}.fileprovider", apk)
         val i = Intent(Intent.ACTION_VIEW).apply {
@@ -311,9 +292,7 @@ fun zipEntries(ctx: Context, uri: Uri): List<String> {
         // फ़ाइल ZIP नहीं है, तो खाली लिस्ट लौटेगी
     }
     return out
-}
-
-class MainActivity : ComponentActivity() {
+}class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val prefs = Store.prefs(this)
@@ -370,7 +349,7 @@ fun App(prefs: SharedPreferences) {
         }
     }
 
-        fun buildApk() {
+    fun buildApk() {
         val token = prefs.getString("gh_token", "") ?: ""
         val owner = prefs.getString("gh_owner", "") ?: ""
         val repo = prefs.getString("gh_repo", "") ?: ""
@@ -388,7 +367,10 @@ fun App(prefs: SharedPreferences) {
             val spec = target.messages.lastOrNull { it.fromUser }?.text ?: ""
             val code = withContext(Dispatchers.IO) {
                 try {
-                    Groq.ask(prefs.getString("groq_key", "") ?: "", listOf(ChatMsg(true, "इस डिज़ाइन से एक Android Kotlin Compose फ़ाइल लिखो, सिर्फ़ कोड दो: $spec")))
+                    Groq.ask(
+                        prefs.getString("groq_key", "") ?: "",
+                        listOf(ChatMsg(true, "इस डिज़ाइन से एक Android Kotlin Compose फ़ाइल लिखो, सिर्फ़ कोड दो: $spec"))
+                    )
                 } catch (e: Exception) {
                     "त्रुटि: ${e.message}"
                 }
@@ -440,9 +422,9 @@ fun App(prefs: SharedPreferences) {
             Store.save(prefs, sessions)
             busy = false
         }
-        }
+    }
 
-        fun install(id: Long) {
+    fun install(id: Long) {
         val token = prefs.getString("gh_token", "") ?: ""
         val owner = prefs.getString("gh_owner", "") ?: ""
         val repo = prefs.getString("gh_repo", "") ?: ""
@@ -468,7 +450,7 @@ fun App(prefs: SharedPreferences) {
                 Installer.install(ctx, saved)
             }
         }
-        }
+    }
 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
         if (uri != null) {
@@ -486,14 +468,14 @@ fun App(prefs: SharedPreferences) {
         }
     }
 
-        fun send() {
+    fun send() {
         val text = input.trim()
         if (text.isEmpty() || busy) return
         input = ""
         if (current.messages.isEmpty()) current.title = text.take(25)
         addMsg(ChatMsg(true, text))
         if (isBuildCommand(text)) buildApk() else aiReply()
-        }
+    }
 
     fun newChat() {
         val s = newSession()
@@ -521,7 +503,8 @@ fun App(prefs: SharedPreferences) {
             onSettings = { screen = Screen.SETTINGS },
             onNewChat = { newChat() },
             onInstall = { install(it) },
-            onChatList = { screen = Screen.CHATLIST }
+            onChatList = { screen = Screen.CHATLIST },
+            onTermux = { screen = Screen.TERMUX }
         )
         Screen.SETTINGS -> SettingsScreen { screen = it }
         Screen.KEYS -> KeysScreen(prefs) { screen = Screen.CHAT }
@@ -548,8 +531,8 @@ fun ChatScreen(
     onAttach: () -> Unit,
     onSettings: () -> Unit,
     onNewChat: () -> Unit,
-    onTermux: () -> Unit
-                    onChatList: () -> Unit,
+    onInstall: (Long) -> Unit,
+    onChatList: () -> Unit,
     onTermux: () -> Unit
 ) {
     Column(modifier = Modifier.fillMaxSize().padding(12.dp)) {
@@ -563,7 +546,8 @@ fun ChatScreen(
                 style = MaterialTheme.typography.titleLarge,
                 modifier = Modifier.weight(1f).padding(start = 4.dp)
             )
-                        TextButton(onClick = onTermux) { Text("Termux") }
+            TextButton(onClick = onTermux) { Text("Termux") }
+            TextButton(onClick = onNewChat) { Text("नई") }
             TextButton(onClick = onSettings) { Text("⚙") }
         }
 
