@@ -548,7 +548,7 @@ fun ChatScreen(
     onSettings: () -> Unit,
     onNewChat: () -> Unit,
     onInstall: (Long) -> Unit,
-    onChatList: () -> Unit
+                onTermux = { screen = Screen.TERMUX }
 ) {
     Column(modifier = Modifier.fillMaxSize().padding(12.dp)) {
         Row(
@@ -561,7 +561,7 @@ fun ChatScreen(
                 style = MaterialTheme.typography.titleLarge,
                 modifier = Modifier.weight(1f).padding(start = 4.dp)
             )
-            TextButton(onClick = onNewChat) { Text("नई") }
+                        TextButton(onClick = onTermux) { Text("Termux") }
             TextButton(onClick = onSettings) { Text("⚙") }
         }
 
