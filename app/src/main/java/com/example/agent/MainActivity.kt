@@ -349,7 +349,7 @@ fun App(prefs: SharedPreferences) {
         }
     }
 
-    fun buildApk() {
+        fun buildApk() {
         val token = prefs.getString("gh_token", "") ?: ""
         val owner = prefs.getString("gh_owner", "") ?: ""
         val repo = prefs.getString("gh_repo", "") ?: ""
@@ -361,24 +361,44 @@ fun App(prefs: SharedPreferences) {
         }
         busy = true
         scope.launch {
+            target.messages.add(ChatMsg(false, "कोड लिखा जा रहा है..."))
+            Store.save(prefs, sessions)
+
+            val spec = target.messages.lastOrNull { it.fromUser }?.text ?: ""
+            val code = withContext(Dispatchers.IO) {
+                try {
+                    Groq.ask(prefs.getString("groq_key", "") ?: "", listOf(ChatMsg(true, "इस डिज़ाइन से एक Android Kotlin Compose फ़ाइल लिखो, सिर्फ़ कोड दो: $spec")))
+                } catch (e: Exception) {
+                    "त्रुटि: ${e.message}"
+                }
+            }
+            val fileCode = extractCode(code).ifEmpty { code }
+
             val before = withContext(Dispatchers.IO) {
                 GitHubBuild.latestArtifactId(token, owner, repo)
             } ?: 0L
-            val code = withContext(Dispatchers.IO) {
-                GitHubBuild.trigger(token, owner, repo)
+
+            val pushCode = withContext(Dispatchers.IO) {
+                GitHubBuild.pushFile(token, owner, repo, "app/src/main/java/com/example/agent/Generated.kt", fileCode)
             }
-            if (code != 204) {
-                target.messages.add(
-                    ChatMsg(false, "GitHub build शुरू नहीं हुआ (code $code)। token और repo जाँचें।")
-                )
+            if (pushCode !in 200..299) {
+                target.messages.add(ChatMsg(false, "GitHub पर फ़ाइल नहीं गई (code $pushCode)।"))
                 Store.save(prefs, sessions)
                 busy = false
                 return@launch
             }
-            target.messages.add(
-                ChatMsg(false, "Build शुरू हो गया है। 2-3 मिनट लगेंगे, मैं इंतज़ार कर रहा हूँ।")
-            )
+            target.messages.add(ChatMsg(false, "कोड GitHub पर भेज दिया। Build शुरू हो रहा है।"))
             Store.save(prefs, sessions)
+
+            val code2 = withContext(Dispatchers.IO) {
+                GitHubBuild.trigger(token, owner, repo)
+            }
+            if (code2 != 204) {
+                target.messages.add(ChatMsg(false, "Build शुरू नहीं हुआ (code $code2)।"))
+                Store.save(prefs, sessions)
+                busy = false
+                return@launch
+            }
 
             var found: Long? = null
             var tries = 0
@@ -394,14 +414,12 @@ fun App(prefs: SharedPreferences) {
             if (f != null) {
                 target.messages.add(ChatMsg(false, "APK तैयार है। नीचे 'इंस्टॉल करें' दबाइए।", f))
             } else {
-                target.messages.add(
-                    ChatMsg(false, "Build अभी पूरा नहीं हुआ। GitHub Actions पेज पर देखें।")
-                )
+                target.messages.add(ChatMsg(false, "Build अभी पूरा नहीं हुआ। GitHub Actions पेज पर देखें।"))
             }
             Store.save(prefs, sessions)
             busy = false
         }
-    }
+        }
 
     fun install(id: Long) {
         val token = prefs.getString("gh_token", "") ?: ""
