@@ -437,14 +437,14 @@ fun App(prefs: SharedPreferences) {
         }
     }
 
-    fun send() {
+        fun send() {
         val text = input.trim()
         if (text.isEmpty() || busy) return
         input = ""
         if (current.messages.isEmpty()) current.title = text.take(25)
         addMsg(ChatMsg(true, text))
         if (isBuildCommand(text)) buildApk() else aiReply()
-    }
+        }
 
     fun newChat() {
         val s = newSession()
