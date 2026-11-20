@@ -205,6 +205,25 @@ object GitHubBuild {
         return code
     }
 
+        fun pushFile(token: String, owner: String, repo: String, path: String, content: String): Int {
+        val encoded = java.util.Base64.getEncoder().encodeToString(content.toByteArray(Charsets.UTF_8))
+        val body = JSONObject()
+            .put("message", "Add $path via agent")
+            .put("content", encoded)
+            .put("branch", "main")
+            .toString()
+        val conn = URL("https://api.github.com/repos/$owner/$repo/contents/$path")
+            .openConnection() as HttpURLConnection
+        conn.requestMethod = "PUT"
+        conn.setRequestProperty("Authorization", "Bearer $token")
+        conn.setRequestProperty("Accept", "application/vnd.github+json")
+        conn.setRequestProperty("Content-Type", "application/json")
+        conn.doOutput = true
+        conn.connectTimeout = 15000
+        conn.readTimeout = 60000
+        conn.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
+        return conn.responseCode
+        }
     fun downloadApk(ctx: Context, token: String, owner: String, repo: String, artifactId: Long): File? {
         val (c, t) = httpGet(
             "https://api.github.com/repos/$owner/$repo/actions/artifacts/$artifactId", token
@@ -223,6 +242,7 @@ object GitHubBuild {
             first.inputStream
         }
 
+        
         val zip = File(ctx.cacheDir, "artifact.zip")
         src.use { input -> FileOutputStream(zip).use { input.copyTo(it) } }
 
