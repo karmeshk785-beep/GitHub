@@ -441,7 +441,7 @@ fun App(prefs: SharedPreferences) {
         }
         }
 
-    fun install(id: Long) {
+        fun install(id: Long) {
         val token = prefs.getString("gh_token", "") ?: ""
         val owner = prefs.getString("gh_owner", "") ?: ""
         val repo = prefs.getString("gh_repo", "") ?: ""
@@ -454,10 +454,20 @@ fun App(prefs: SharedPreferences) {
             if (apk == null) {
                 addMsg(ChatMsg(false, "APK डाउनलोड नहीं हो पाई। token जाँचें।"))
             } else {
-                Installer.install(ctx, apk)
+                val saved = withContext(Dispatchers.IO) {
+                    val dir = android.os.Environment.getExternalStoragePublicDirectory(
+                        android.os.Environment.DIRECTORY_DOWNLOADS
+                    )
+                    dir.mkdirs()
+                    val dest = File(dir, "agent-app-${System.currentTimeMillis()}.apk")
+                    apk.copyTo(dest, overwrite = true)
+                    dest
+                }
+                addMsg(ChatMsg(false, "APK Downloads में सेव हो गई: ${saved.name}"))
+                Installer.install(ctx, saved)
             }
         }
-    }
+        }
 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
         if (uri != null) {
