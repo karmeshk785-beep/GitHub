@@ -548,7 +548,8 @@ fun ChatScreen(
     onSettings: () -> Unit,
     onNewChat: () -> Unit,
     onInstall: (Long) -> Unit,
-                onTermux = { screen = Screen.TERMUX }
+                    onChatList: () -> Unit,
+    onTermux: () -> Unit
 ) {
     Column(modifier = Modifier.fillMaxSize().padding(12.dp)) {
         Row(
